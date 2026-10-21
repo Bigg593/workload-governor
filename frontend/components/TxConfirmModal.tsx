@@ -20,21 +20,23 @@ export default function TxConfirmModal({ modal }: Props) {
 
   const isOpen = state.status !== "idle";
 
-  // Save/restore focus, trap focus inside dialog
+  // Save/restore focus; move focus into dialog when opened
   useEffect(() => {
     if (isOpen) {
       previousFocus.current = document.activeElement as HTMLElement;
-      // Focus the first focusable element after paint
+      // Focus the first focusable element, fall back to dialog container
       requestAnimationFrame(() => {
-        const first = dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE)[0];
+        const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE);
+        const first = focusable?.[0] ?? dialogRef.current;
         first?.focus();
       });
     } else {
+      // Restore focus to the element that was focused before the modal opened
       previousFocus.current?.focus();
     }
   }, [isOpen]);
 
-  // Escape key closes / cancels
+  // Escape key closes / cancels (disabled while a tx is in-flight)
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -46,6 +48,10 @@ export default function TxConfirmModal({ modal }: Props) {
     return () => document.removeEventListener("keydown", onKey);
   }, [isOpen, state.status, _reject]);
 
+  /**
+   * Trap Tab/Shift+Tab inside the dialog so keyboard users cannot navigate
+   * to elements in the background page while the modal is open.
+   */
   function trapFocus(e: KeyboardEvent<HTMLDivElement>) {
     if (e.key !== "Tab") return;
     const focusable = Array.from(
@@ -55,9 +61,11 @@ export default function TxConfirmModal({ modal }: Props) {
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     if (e.shiftKey && document.activeElement === first) {
+      // Shift+Tab on first element → wrap to last
       e.preventDefault();
       last.focus();
     } else if (!e.shiftKey && document.activeElement === last) {
+      // Tab on last element → wrap to first
       e.preventDefault();
       first.focus();
     }
@@ -76,7 +84,7 @@ export default function TxConfirmModal({ modal }: Props) {
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop — click closes if not loading */}
       <div
         aria-hidden="true"
         onClick={() => { if (!isLoading) _reject(); }}
@@ -88,13 +96,14 @@ export default function TxConfirmModal({ modal }: Props) {
         }}
       />
 
-      {/* Dialog */}
+      {/* Dialog — tabIndex={-1} allows programmatic focus on the container */}
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="txmodal-title"
         aria-describedby="txmodal-desc"
+        tabIndex={-1}
         onKeyDown={trapFocus}
         className="modal-slide-in"
         style={{
@@ -108,6 +117,7 @@ export default function TxConfirmModal({ modal }: Props) {
           padding: "28px 32px",
           width: "min(420px, 92vw)",
           boxShadow: "0 24px 64px rgba(0,0,0,0.6)",
+          outline: "none",
         }}
       >
         <h2 id="txmodal-title" style={{ margin: "0 0 4px", fontSize: "1.125rem" }}>
@@ -147,13 +157,27 @@ export default function TxConfirmModal({ modal }: Props) {
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
           {isError ? (
             <>
-              <SecondaryButton onClick={close}>Dismiss</SecondaryButton>
-              <PrimaryButton onClick={_resolve} loading={false}>Retry</PrimaryButton>
+              <SecondaryButton onClick={close} aria-label="Dismiss error and close modal">
+                Dismiss
+              </SecondaryButton>
+              <PrimaryButton onClick={_resolve} loading={false} aria-label="Retry the transaction">
+                Retry
+              </PrimaryButton>
             </>
           ) : (
             <>
-              <SecondaryButton onClick={_reject} disabled={isLoading}>Cancel</SecondaryButton>
-              <PrimaryButton onClick={_resolve} loading={isLoading}>
+              <SecondaryButton
+                onClick={_reject}
+                disabled={isLoading}
+                aria-label="Cancel and close modal"
+              >
+                Cancel
+              </SecondaryButton>
+              <PrimaryButton
+                onClick={_resolve}
+                loading={isLoading}
+                aria-label={isLoading ? "Signing transaction…" : "Confirm and sign transaction with Freighter"}
+              >
                 {isLoading ? "Signing…" : "Confirm & Sign"}
               </PrimaryButton>
             </>
@@ -174,18 +198,20 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 function PrimaryButton({
-  onClick, loading, children, disabled,
+  onClick, loading, children, disabled, "aria-label": ariaLabel,
 }: {
   onClick: () => void;
   loading: boolean;
   children: React.ReactNode;
   disabled?: boolean;
+  "aria-label"?: string;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={loading || disabled}
       aria-busy={loading}
+      aria-label={ariaLabel}
       style={{
         padding: "8px 20px", borderRadius: 8, border: "none",
         background: "#2563eb", color: "#fff",
@@ -200,16 +226,18 @@ function PrimaryButton({
 }
 
 function SecondaryButton({
-  onClick, disabled, children,
+  onClick, disabled, children, "aria-label": ariaLabel,
 }: {
   onClick: () => void;
   disabled?: boolean;
   children: React.ReactNode;
+  "aria-label"?: string;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      aria-label={ariaLabel}
       style={{
         padding: "8px 20px", borderRadius: 8,
         border: "1px solid #3a3a3c", background: "transparent",
